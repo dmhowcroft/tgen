@@ -246,6 +246,4 @@ def delex_sent(da, sent, delex_slots, use_slot_names=True, delex_slot_names=Fals
         abst.end = abst.start + 1
         shift += shift_add
 
-    abst_da.dais = [abst_da[i] for i in abst_da_order]
-
     return ' '.join(toks) if return_string else toks, abst_da, absts
