@@ -7,11 +7,11 @@ SHELL = /bin/bash
 TGEN = ../run_tgen.py
 MEM = 8g
 CPUS = 4
-QP = --engine=grun
+QP = --engine=slurm --queue=amd-longq
 ifdef LOCAL
   QP = --engine=console
 endif
-QSUBMIT = qsubmit --logdir '$(TRY_DIR)' --mem $(MEM) --cores $(CPUS) --jobname T.$(TRY_NUM)$(CV_NUM)$(SEED).$(RUN_NAME) $(QP) $(QHOLD)# using OB's qsubmit script
+QSUBMIT = qsubmit --logdir '$(TRY_DIR)' --mem $(MEM) --cores $(CPUS) --jobname T.$(TRY_NUM)$(CV_NUM)$(SEED).$(RUN_NAME) $(QP) $(QHOLD) --
 ACTIVATE = echo -n
 
 ifdef DEBUG
@@ -21,11 +21,12 @@ endif
 ifdef DEBUG_GEN
   DEBUG_LOG_GEN = -d $(TRY_DIR)/gen.debug-log.txt
 endif
-MTEVAL = ../util/mteval-v11b.pl
+METRICS = $$HOME/e2e-metrics/measure_scores.py
 POSTPROCESS = ./postprocess/postprocess.py
-AVERAGE_SCORES = ../util/average_scores.pl
-GREP_SCORES = ../util/grep_scores.pl --bleu-range=10:22 --nist-range=4:5
+AVERAGE_SCORES = ../util/average_scores.pl --e2e
+GREP_SCORES = ../util/grep_scores.pl --bleu-range=50:70 --nist-range=6:9 --meteor-range=30:45 --rouge-range=55:70 --cider-range=1:2.5
 DESC_EXP = ../util/describe_experiment.pl
+NOWRAP = ../util/nowrap.pl
 LOG_CUTOFF= 10000
 NUM_EXP = 20  # number of experiments to list in `make desc'
 
@@ -122,9 +123,10 @@ help:
 
 # List all experiments, find scores in logs (of various versions)
 desc:
-	@ls -d $(RUNS_DIR)/* | sort | tail -n $(NUM_EXP) | while read file; do \
+	@COLS=`tput cols`; \
+	ls -d $(RUNS_DIR)/* | sort | tail -n $(NUM_EXP) | while read file; do \
 		if [[ -f $$file/$(SCOREFILE) && -z "$(REFRESH)" ]]; then \
-			cat $$file/$(SCOREFILE) ; \
+			cat $$file/$(SCOREFILE) | $(NOWRAP) $$COLS; \
 			continue ; \
 		fi ; \
 		echo -ne $$file ":  " | sed 's/runs\///;s/_/  /;s/_/ /;s/_/  /;s/  20/  /;s/-[0-9][0-9]  /  /;' > $$file/$(SCOREFILE);  \
@@ -132,7 +134,7 @@ desc:
 		echo -ne '    ' >> $$file/$(SCOREFILE) ; \
 		cat $$file/ABOUT | tr  '\n' ' ' >> $$file/$(SCOREFILE); \
 		echo >> $$file/$(SCOREFILE); \
-		cat $$file/$(SCOREFILE); \
+		cat $$file/$(SCOREFILE) | $(NOWRAP) $$COLS; \
 	done
 
 shortdesc:
@@ -177,8 +179,8 @@ cv_run:
 		TRAIN_RUN=seq2seq_train ; \
 		TEST_RUN=seq2seq_gen_cv ; \
 		make $$TRAIN_RUN TRY_DIR=$(TRY_DIR)/$$SEED SEED=$$SEED TRY_NUM=$(TRY_NUM) 2>&1 | tee -a $(TRY_DIR)/cv.log.txt ; \
-		JOB_NUM=`cat $(TRY_DIR)/cv.log.txt | grep '^Your job' | tail -n 1 | sed 's/^Your job \([0-9]\+\).*/\1/;' ` ; \
-		make $$TEST_RUN TRY_DIR=$(TRY_DIR)/$$SEED TRY_NUM=$(TRY_NUM) QP="$(QP)" QHOLD="--hold $$JOB_NUM"; \
+		JOB_NUM=`cat $(TRY_DIR)/cv.log.txt | grep '^\(Your job\|Submitted batch\|Job_ID\)' | tail -n 1 | sed 's/^\(Your job\|Submitted batch job\|Job_ID:\) \([0-9]\+\).*/\2/;' ` ; \
+		make $$TEST_RUN TRY_DIR=$(TRY_DIR)/$$SEED SEED=$$SEED TRY_NUM=$(TRY_NUM) QP="$(QP)" QHOLD="--hold $$JOB_NUM"; \
 	done
 
 cv_score-%:
@@ -219,7 +221,7 @@ seq2seq_train:
 
 seq2seq_gen_cv:
 	make prepare_test_data TRY_DIR=$(TRY_DIR)
-	make seq2seq_gen_process TRY_DIR=$(TRY_DIR) TRY_NUM=$(TRY_NUM) QP="$(QP)" QHOLD="$(QHOLD)"
+	make seq2seq_gen_process TRY_DIR=$(TRY_DIR) SEED=$(SEED) TRY_NUM=$(TRY_NUM) QP="$(QP)" QHOLD="$(QHOLD)"
 
 prepare_test_data:
 	cp $(TEST_DAS) $(TRY_DIR)/test-das.txt
@@ -229,7 +231,6 @@ prepare_test_data:
 
 seq2seq_gen_process: RUN_NAME := seq2seq_gen
 seq2seq_gen_process: GEN_MODEL := $(TRY_DIR)/seq2seq.pickle.gz
-seq2seq_gen_process: SELECTOR_CONFIG := -r "$(EVAL_SELECTOR)" -t "$(TARGET_SELECTOR)"
 seq2seq_gen_process: gen_process
 
 gen_process:
@@ -237,7 +238,9 @@ gen_process:
 	$(QSUBMIT) '$(ACTIVATE); \
 		$(TGEN) $(RUN_NAME) -e $(TRY_DIR)/test-text.txt $(DEBUG_LOG_GEN) \
 			-w $(TRY_DIR)/out-text.txt $(GEN_CONFIG) -a $(TRY_DIR)/test-abst.txt \
-		$(GEN_MODEL) $(TRY_DIR)/test-das.txt' \
+		$(GEN_MODEL) $(TRY_DIR)/test-das.txt; \
+		$(POSTPROCESS) $(TRY_DIR)/out-text.txt $(TRY_DIR)/out-detok.txt; \
+		$(METRICS) $(TRY_DIR)/test-conc.txt $(TRY_DIR)/out-text.txt' \
 		2>&1 | tee $(TRY_DIR)/$(RUN_NAME).log.txt
 
 # Rerun an experiment (TRY_DIR, TRY_NUM, RUN_NAME must be set!)

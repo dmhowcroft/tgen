@@ -6,12 +6,15 @@ TensorFlow Helper functions.
 """
 
 from __future__ import unicode_literals
+import os
 
 import tensorflow as tf
 from tensorflow.python.framework import dtypes
 from tensorflow.python.ops import array_ops, control_flow_ops
 from tensorflow.contrib.rnn import EmbeddingWrapper, OutputProjectionWrapper
 from tensorflow.python.ops import variable_scope as vs
+
+from tgen.logf import log_warn
 import tgen.externals.seq2seq as tf06s2s
 
 
@@ -63,6 +66,16 @@ class TFModel(object):
                 op = var.assign(vals[var.name])
                 self.session.run(op)
 
+    def tf_check_filename(self, fname):
+        """Checks if a directory is specified in the file name (otherwise newer TF versions
+        would crash when saving a model).
+        @param fname: The file name to be checked.
+        @return: Adjusted file name (with "./" if no directory was specified)."""
+        if not os.path.dirname(fname):
+            log_warn("Directory not specified, using current directory: %s" % fname)
+            fname = os.path.join(os.curdir, fname)
+        return fname
+
 
 def embedding_attention_seq2seq_context(encoder_inputs, decoder_inputs, cell,
                                         num_encoder_symbols, num_decoder_symbols,
@@ -98,7 +111,7 @@ def embedding_attention_seq2seq_context(encoder_inputs, decoder_inputs, cell,
         # calculate a concatenation of encoder outputs to put attention on.
         top_states = [array_ops.reshape(e, [-1, 1, cell.output_size * 2])
                       for e in encoder_outputs]
-        #added positional arguements as it was taking axis to be the values
+        # added positional arguments since these swapped in some TF version
         attention_states = array_ops.concat(axis=1, values=top_states)
 
         # change the decoder cell to accommodate wider input
